@@ -4,7 +4,6 @@
   become: true
   
   tasks:
-    
     # Update/Upgrade Tasks
     - name: Paketlisten aktualisieren (apt update)
       ansible.builtin.apt:
