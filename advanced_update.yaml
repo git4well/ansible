@@ -1,45 +1,19 @@
 ---
-- name: OS sicher aktualisieren
+- name: OS aktualisieren
   hosts: cluster01
   become: true
-  
   tasks:
-    - name: Backup von ssh-Konfiguration erstellen
-      ansible.builtin.copy:
-        src: /etc/ssh/sshd_config
-        dest: /etc/ssh/sshd_config.backup-{{ ansible_date_time.date }}
-        remote_src: yes
-      ignore_errors: yes
-
-    - name: Backup von fstab erstellen (falls vorhanden)
-      ansible.builtin.copy:
-        src: /etc/fstab
-        dest: /etc/fstab.backup-{{ ansible_date_time.date }}
-        remote_src: yes
-      ignore_errors: yes
-    
+    # Original-Tasks, die nachweislich funktionieren
     - name: Paketlisten aktualisieren (apt update)
       ansible.builtin.apt:
         update_cache: yes
-      register: apt_update
-      retries: 3
-      delay: 5
-      until: apt_update is success
     
-    - name: Alle Pakete aktualisieren (apt upgrade)
+    - name: Pakete aktualisieren (apt upgrade)
       ansible.builtin.apt:
         upgrade: dist
         autoremove: yes
         autoclean: yes
-      register: apt_upgrade
-      retries: 2
-      delay: 5
-      until: apt_upgrade is success
     
-    - name: Aktualisierte Pakete protokollieren
-      ansible.builtin.shell: echo "{{ ansible_date_time.iso8601 }} - Pakete aktualisiert auf {{ inventory_hostname }}" >> /var/log/ansible-updates.log
-      when: apt_upgrade.changed
-      
     - name: Prüfen, ob ein Neustart erforderlich ist
       ansible.builtin.stat:
         path: /var/run/reboot-required
@@ -50,11 +24,13 @@
         msg: "System wird neu gestartet, da Updates dies erfordern."
         connect_timeout: 5
         reboot_timeout: 600
-        pre_reboot_delay: 15
-        post_reboot_delay: 30
       when: reboot_required.stat.exists
-      register: reboot_result
-    
-    - name: Neustart-Information protokollieren
-      ansible.builtin.shell: echo "{{ ansible_date_time.iso8601 }} - System wurde nach Updates neu gestartet" >> /var/log/ansible-updates.log
-      when: reboot_result.rebooted is defined and reboot_result.rebooted
+      
+    # Eine einfache, sichere Ergänzung: Backup der SSH-Konfiguration
+    - name: Backup der SSH-Konfiguration erstellen
+      ansible.builtin.copy:
+        src: /etc/ssh/sshd_config
+        dest: /etc/ssh/sshd_config.backup-{{ ansible_date_time.date }}
+        remote_src: yes
+      ignore_errors: yes
+      when: reboot_required.stat.exists  # Nur wenn ein Neustart erforderlich ist
