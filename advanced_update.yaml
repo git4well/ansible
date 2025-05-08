@@ -2,7 +2,6 @@
 - name: OS aktualisieren
   hosts: cluster01
   become: true
-  
   tasks:
     
     # Update/Upgrade Tasks
@@ -15,7 +14,7 @@
         upgrade: dist
         autoremove: yes
         autoclean: yes
-
+    
     # Neustart Tasks
     - name: Prüfen, ob ein Neustart erforderlich ist
       ansible.builtin.stat:
@@ -28,7 +27,7 @@
         connect_timeout: 5
         reboot_timeout: 600
       when: reboot_required.stat.exists
-      
+    
     # Backup der SSH-Konfiguration (wenn Neustart erforderlich)
     - name: Backup der SSH-Konfiguration erstellen (wenn Neustart erforderlich)
       ansible.builtin.copy:
@@ -37,4 +36,3 @@
         remote_src: yes
       ignore_errors: yes
       when: reboot_required.stat.exists  # Nur wenn ein Neustart erforderlich ist
-      
