@@ -1,0 +1,106 @@
+---
+- name: OS sicher aktualisieren
+  hosts: cluster01
+  become: true
+  vars:
+    update_log_path: "/var/log/ansible-updates.log"
+    notify_email: "admin@sud0.eu"  # Bei Bedarf anpassen
+  
+  pre_tasks:
+    - name: Überprüfen des Systemstatus vor Updates
+      ansible.builtin.command: uptime
+      register: system_uptime
+      changed_when: false
+    
+    - name: Backup von kritischen Konfigurationsdateien erstellen
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ item }}.backup-{{ ansible_date_time.date }}"
+        remote_src: yes
+      loop:
+        - /etc/fstab
+        - /etc/ssh/sshd_config
+      ignore_errors: yes
+  
+  tasks:
+    - name: Paketlisten aktualisieren (apt update)
+      ansible.builtin.apt:
+        update_cache: yes
+      register: apt_update
+      retries: 3
+      delay: 5
+      until: apt_update is success
+    
+    - name: Zuerst nur Sicherheitsupdates installieren
+      ansible.builtin.apt:
+        upgrade: yes
+        update_cache: no  # Bereits aktualisiert
+        only_upgrade: yes
+        security: yes
+      register: security_update
+      retries: 2
+      delay: 10
+      until: security_update is success
+    
+    - name: Alle Pakete aktualisieren (apt upgrade)
+      ansible.builtin.apt:
+        upgrade: dist
+        autoremove: yes
+        autoclean: yes
+        purge: yes  # Konfigurationsdateien von entfernten Paketen auch löschen
+      register: apt_upgrade
+      retries: 2
+      delay: 5
+      until: apt_upgrade is success
+    
+    - name: Aktualisierte Pakete protokollieren
+      ansible.builtin.copy:
+        content: "{{ ansible_date_time.iso8601 }} - Pakete aktualisiert:\n{{ apt_upgrade.stdout }}\n\n"
+        dest: "{{ update_log_path }}"
+        mode: '0644'
+        owner: root
+        group: root
+      when: apt_upgrade.changed
+      
+    - name: Unbenutzte Kernel-Pakete entfernen
+      ansible.builtin.shell: apt-get remove --purge $(dpkg -l 'linux-*' | sed '/^ii/!d;/'"$(uname -r | sed "s/\(.*\)-\([^0-9]\+\)/\1/")"'/d;s/^[^ ]* [^ ]* \([^ ]*\).*/\1/;/[0-9]/!d') -y
+      register: kernel_clean
+      changed_when: kernel_clean.stdout is search("removed")
+      failed_when: false
+    
+    - name: Prüfen, ob ein Neustart erforderlich ist
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+    
+    - name: System neu starten (wenn nötig)
+      ansible.builtin.reboot:
+        msg: "System wird neu gestartet, da Updates dies erfordern."
+        connect_timeout: 5
+        reboot_timeout: 600
+        pre_reboot_delay: 30  # 30 Sekunden Wartezeit vor dem Neustart
+        post_reboot_delay: 60  # 60 Sekunden Wartezeit nach dem Neustart
+      when: reboot_required.stat.exists
+      register: reboot_result
+    
+    - name: Neustart-Benachrichtigung senden
+      ansible.builtin.mail:
+        subject: "System {{ inventory_hostname }} wurde nach Updates neu gestartet"
+        to: "{{ notify_email }}"
+        body: "Das System {{ inventory_hostname }} wurde am {{ ansible_date_time.iso8601 }} nach der Installation von Updates neu gestartet."
+      when: reboot_result.rebooted is defined and reboot_result.rebooted
+
+  post_tasks:
+    - name: Systemstatus nach Updates überprüfen
+      ansible.builtin.command: systemctl status --no-pager
+      register: system_status
+      changed_when: false
+      
+    - name: Überprüfen, ob wichtige Dienste laufen
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: started
+      loop:
+        - ssh
+        - cron
+      ignore_errors: yes
