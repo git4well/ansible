@@ -36,4 +36,4 @@
         dest: /etc/ssh/sshd_config.backup-{{ ansible_date_time.date }}
         remote_src: yes
       ignore_errors: yes
-      when: reboot_required.stat.exists  # Nur wenn ein Neustart erforderlich ist
+      when: reboot_required.stat.exists
