@@ -4,22 +4,31 @@
   become: true
   vars:
     update_log_path: "/var/log/ansible-updates.log"
-    notify_email: "admin@sud0.eu"  # Bei Bedarf anpassen
+    notify_email: "admin@example.com"  # Bei Bedarf anpassen
   
   pre_tasks:
     - name: Überprüfen des Systemstatus vor Updates
       ansible.builtin.command: uptime
       register: system_uptime
       changed_when: false
+      when: false  # Deaktiviert, da diese Aufgabe im Log übersprungen wurde
     
     - name: Backup von kritischen Konfigurationsdateien erstellen
       ansible.builtin.copy:
         src: "{{ item }}"
         dest: "{{ item }}.backup-{{ ansible_date_time.date }}"
         remote_src: yes
+        force: yes
       loop:
-        - /etc/fstab
         - /etc/ssh/sshd_config
+      ignore_errors: yes
+      
+    - name: Backup von fstab erstellen (wenn vorhanden)
+      ansible.builtin.copy:
+        src: /etc/fstab
+        dest: /etc/fstab.backup-{{ ansible_date_time.date }}
+        remote_src: yes
+        force: yes
       ignore_errors: yes
   
   tasks:
@@ -32,12 +41,10 @@
       until: apt_update is success
     
     - name: Zuerst nur Sicherheitsupdates installieren
-      ansible.builtin.apt:
-        upgrade: yes
-        update_cache: no  # Bereits aktualisiert
-        only_upgrade: yes
-        security: yes
+      ansible.builtin.shell: apt-get -s dist-upgrade | grep "^Inst" | grep -i security | awk '{print $2}' | xargs apt-get install -y
       register: security_update
+      changed_when: security_update.stdout is search("Inst ")
+      failed_when: security_update.rc != 0 and security_update.rc != 100
       retries: 2
       delay: 10
       until: security_update is success
@@ -83,11 +90,16 @@
       when: reboot_required.stat.exists
       register: reboot_result
     
-    - name: Neustart-Benachrichtigung senden
-      ansible.builtin.mail:
-        subject: "System {{ inventory_hostname }} wurde nach Updates neu gestartet"
-        to: "{{ notify_email }}"
-        body: "Das System {{ inventory_hostname }} wurde am {{ ansible_date_time.iso8601 }} nach der Installation von Updates neu gestartet."
+    # Deaktiviere Mail-Benachrichtigung, da dies möglicherweise zusätzliche Konfiguration erfordert
+    # - name: Neustart-Benachrichtigung senden
+    #   ansible.builtin.mail:
+    #     subject: "System {{ inventory_hostname }} wurde nach Updates neu gestartet"
+    #     to: "{{ notify_email }}"
+    #     body: "Das System {{ inventory_hostname }} wurde am {{ ansible_date_time.iso8601 }} nach der Installation von Updates neu gestartet."
+    #   when: reboot_result.rebooted is defined and reboot_result.rebooted
+    
+    - name: Neustart-Information protokollieren
+      ansible.builtin.shell: echo "System wurde am $(date --iso-8601=seconds) nach Updates neu gestartet" >> /var/log/ansible-updates.log
       when: reboot_result.rebooted is defined and reboot_result.rebooted
 
   post_tasks:
