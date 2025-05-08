@@ -2,8 +2,10 @@
 - name: OS aktualisieren
   hosts: cluster01
   become: true
+  
   tasks:
-    # Original-Tasks, die nachweislich funktionieren
+    
+    # Update/Upgrade Tasks
     - name: Paketlisten aktualisieren (apt update)
       ansible.builtin.apt:
         update_cache: yes
@@ -13,7 +15,8 @@
         upgrade: dist
         autoremove: yes
         autoclean: yes
-    
+
+    # Neustart Tasks
     - name: Prüfen, ob ein Neustart erforderlich ist
       ansible.builtin.stat:
         path: /var/run/reboot-required
@@ -26,11 +29,12 @@
         reboot_timeout: 600
       when: reboot_required.stat.exists
       
-    # Eine einfache, sichere Ergänzung: Backup der SSH-Konfiguration
-    - name: Backup der SSH-Konfiguration erstellen
+    # Backup der SSH-Konfiguration (wenn Neustart erforderlich)
+    - name: Backup der SSH-Konfiguration erstellen (wenn Neustart erforderlich)
       ansible.builtin.copy:
         src: /etc/ssh/sshd_config
         dest: /etc/ssh/sshd_config.backup-{{ ansible_date_time.date }}
         remote_src: yes
       ignore_errors: yes
       when: reboot_required.stat.exists  # Nur wenn ein Neustart erforderlich ist
+      
