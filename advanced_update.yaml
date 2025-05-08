@@ -2,36 +2,22 @@
 - name: OS sicher aktualisieren
   hosts: cluster01
   become: true
-  vars:
-    update_log_path: "/var/log/ansible-updates.log"
-    notify_email: "admin@example.com"  # Bei Bedarf anpassen
   
-  pre_tasks:
-    - name: Überprüfen des Systemstatus vor Updates
-      ansible.builtin.command: uptime
-      register: system_uptime
-      changed_when: false
-      when: false  # Deaktiviert, da diese Aufgabe im Log übersprungen wurde
-    
-    - name: Backup von kritischen Konfigurationsdateien erstellen
+  tasks:
+    - name: Backup von ssh-Konfiguration erstellen
       ansible.builtin.copy:
-        src: "{{ item }}"
-        dest: "{{ item }}.backup-{{ ansible_date_time.date }}"
+        src: /etc/ssh/sshd_config
+        dest: /etc/ssh/sshd_config.backup-{{ ansible_date_time.date }}
         remote_src: yes
-        force: yes
-      loop:
-        - /etc/ssh/sshd_config
       ignore_errors: yes
-      
-    - name: Backup von fstab erstellen (wenn vorhanden)
+
+    - name: Backup von fstab erstellen (falls vorhanden)
       ansible.builtin.copy:
         src: /etc/fstab
         dest: /etc/fstab.backup-{{ ansible_date_time.date }}
         remote_src: yes
-        force: yes
       ignore_errors: yes
-  
-  tasks:
+    
     - name: Paketlisten aktualisieren (apt update)
       ansible.builtin.apt:
         update_cache: yes
@@ -40,41 +26,20 @@
       delay: 5
       until: apt_update is success
     
-    - name: Zuerst nur Sicherheitsupdates installieren
-      ansible.builtin.shell: apt-get -s dist-upgrade | grep "^Inst" | grep -i security | awk '{print $2}' | xargs apt-get install -y
-      register: security_update
-      changed_when: security_update.stdout is search("Inst ")
-      failed_when: security_update.rc != 0 and security_update.rc != 100
-      retries: 2
-      delay: 10
-      until: security_update is success
-    
     - name: Alle Pakete aktualisieren (apt upgrade)
       ansible.builtin.apt:
         upgrade: dist
         autoremove: yes
         autoclean: yes
-        purge: yes  # Konfigurationsdateien von entfernten Paketen auch löschen
       register: apt_upgrade
       retries: 2
       delay: 5
       until: apt_upgrade is success
     
     - name: Aktualisierte Pakete protokollieren
-      ansible.builtin.copy:
-        content: "{{ ansible_date_time.iso8601 }} - Pakete aktualisiert:\n{{ apt_upgrade.stdout }}\n\n"
-        dest: "{{ update_log_path }}"
-        mode: '0644'
-        owner: root
-        group: root
+      ansible.builtin.shell: echo "{{ ansible_date_time.iso8601 }} - Pakete aktualisiert auf {{ inventory_hostname }}" >> /var/log/ansible-updates.log
       when: apt_upgrade.changed
       
-    - name: Unbenutzte Kernel-Pakete entfernen
-      ansible.builtin.shell: apt-get remove --purge $(dpkg -l 'linux-*' | sed '/^ii/!d;/'"$(uname -r | sed "s/\(.*\)-\([^0-9]\+\)/\1/")"'/d;s/^[^ ]* [^ ]* \([^ ]*\).*/\1/;/[0-9]/!d') -y
-      register: kernel_clean
-      changed_when: kernel_clean.stdout is search("removed")
-      failed_when: false
-    
     - name: Prüfen, ob ein Neustart erforderlich ist
       ansible.builtin.stat:
         path: /var/run/reboot-required
@@ -85,34 +50,11 @@
         msg: "System wird neu gestartet, da Updates dies erfordern."
         connect_timeout: 5
         reboot_timeout: 600
-        pre_reboot_delay: 30  # 30 Sekunden Wartezeit vor dem Neustart
-        post_reboot_delay: 60  # 60 Sekunden Wartezeit nach dem Neustart
+        pre_reboot_delay: 15
+        post_reboot_delay: 30
       when: reboot_required.stat.exists
       register: reboot_result
     
-    # Deaktiviere Mail-Benachrichtigung, da dies möglicherweise zusätzliche Konfiguration erfordert
-    # - name: Neustart-Benachrichtigung senden
-    #   ansible.builtin.mail:
-    #     subject: "System {{ inventory_hostname }} wurde nach Updates neu gestartet"
-    #     to: "{{ notify_email }}"
-    #     body: "Das System {{ inventory_hostname }} wurde am {{ ansible_date_time.iso8601 }} nach der Installation von Updates neu gestartet."
-    #   when: reboot_result.rebooted is defined and reboot_result.rebooted
-    
     - name: Neustart-Information protokollieren
-      ansible.builtin.shell: echo "System wurde am $(date --iso-8601=seconds) nach Updates neu gestartet" >> /var/log/ansible-updates.log
+      ansible.builtin.shell: echo "{{ ansible_date_time.iso8601 }} - System wurde nach Updates neu gestartet" >> /var/log/ansible-updates.log
       when: reboot_result.rebooted is defined and reboot_result.rebooted
-
-  post_tasks:
-    - name: Systemstatus nach Updates überprüfen
-      ansible.builtin.command: systemctl status --no-pager
-      register: system_status
-      changed_when: false
-      
-    - name: Überprüfen, ob wichtige Dienste laufen
-      ansible.builtin.service:
-        name: "{{ item }}"
-        state: started
-      loop:
-        - ssh
-        - cron
-      ignore_errors: yes
